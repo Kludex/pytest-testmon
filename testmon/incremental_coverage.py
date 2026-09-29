@@ -210,7 +210,9 @@ def run_tests(arguments, cache_path, select, forced_tests=None):
         else:
             env.pop("TESTMON_COVERAGE_CACHE", None)
             env.pop("TESTMON_COVERAGE_FORCED_TESTS_FILE", None)
-        option = "--testmon" if select else "--testmon-noselect"
+        options = (
+            ["--testmon", "--testmon-forceselect"] if select else ["--testmon-noselect"]
+        )
         command = [
             sys.executable,
             "-m",
@@ -219,7 +221,7 @@ def run_tests(arguments, cache_path, select, forced_tests=None):
             "-p",
             "-m",
             "pytest",
-            option,
+            *options,
             *arguments,
         ]
         status = subprocess.call(command, env=env)

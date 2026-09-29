@@ -138,6 +138,8 @@ def test_session_fixture_teardown_remains_covered_across_batches(
         "-p",
         "testmon.pytest_testmon",
         "test_many.py",
+        "-m",
+        "not slow",
         "-q",
     ]
     result = subprocess.run(
