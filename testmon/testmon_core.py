@@ -557,7 +557,6 @@ class TestmonCollector:
             or self._next_test_name is None
             or self._interrupted_at
         ):
-            self.cov.stop()
             nodes_files_lines, lines_data = self.get_nodes_files_lines(
                 dont_include=self._interrupted_at
             )
@@ -586,8 +585,8 @@ class TestmonCollector:
                 else:
                     outer_cov.get_data().add_lines(filtered_lines_data)
 
-            self.cov.erase()
-            self.cov.start()
+            # Keep suspended session fixtures traced across batches.
+            self.cov.get_data().erase()
             self.batched_test_names = set()
         return nodes_files_lines
 

@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,3 +97,63 @@ def test_merge_discards_removed_test_context(tmp_path: Path) -> None:
 
     assert merged.arcs(str(test_file)) == [(1, -1)]
     assert merged.arcs(str(source)) is None
+
+
+def test_session_fixture_teardown_remains_covered_across_batches(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".gitignore").write_text(".pytest_cache/\n__pycache__/\n.coverage*\n")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.coverage.run]\nbranch = true\ninclude = ["conftest.py"]\n'
+        "[tool.coverage.report]\nfail_under = 100\n"
+    )
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n"
+        "@pytest.fixture(scope='session', autouse=True)\n"
+        "def session_fixture():\n"
+        "    yield\n"
+        "    return\n"
+    )
+    (tmp_path / "test_many.py").write_text(
+        "import pytest\n"
+        "@pytest.mark.parametrize('index', range(251))\n"
+        "def test_many(index):\n"
+        "    assert index >= 0\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    env = os.environ.copy()
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH", ""))
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "testmon.incremental_coverage",
+        "--cache",
+        str(tmp_path / ".coverage-cache"),
+        "--include",
+        "conftest.py",
+        "--",
+        "-p",
+        "testmon.pytest_testmon",
+        "test_many.py",
+        "-q",
+    ]
+    result = subprocess.run(
+        command,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "251 passed" in result.stdout
+    assert "100%" in result.stdout
+
+    cached = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert cached.returncode == 0, cached.stdout + cached.stderr
+    assert "251 deselected" in cached.stdout
+    assert "100%" in cached.stdout
