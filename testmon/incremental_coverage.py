@@ -277,19 +277,26 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="testmon-coverage-merged-") as tempdir:
         output_path = Path(tempdir) / ".coverage"
-        fresh = CoverageData(basename=str(Path(tempdir) / "fresh.coverage"))
+        fresh_path = Path(tempdir) / "fresh.coverage"
+        fresh = CoverageData(basename=str(fresh_path))
         fresh.loads(fresh_bytes)
         try:
-            if cached:
+            if (
+                cached
+                and changed_files(cached[1]) == set()
+                and fresh.measured_contexts() <= {""}
+            ):
+                shutil.copyfile(args.cache, output_path)
+            elif cached:
                 merge_coverage(cached[0], fresh, cached[1], output_path)
             else:
-                merge_coverage(None, fresh, None, output_path)
+                shutil.copyfile(fresh_path, output_path)
         except IncompleteCoverageCache:
             status, fresh_bytes = run_tests(pytest_args, args.cache, select=False)
             if status:
                 return status
             fresh.loads(fresh_bytes)
-            merge_coverage(None, fresh, None, output_path)
+            shutil.copyfile(fresh_path, output_path)
 
         result = Coverage(data_file=str(output_path))
         result.load()
