@@ -572,7 +572,8 @@ class TestmonSelect:
             else:
                 selected.append(item)
 
-        sort_items_by_duration(selected, self.testmon_data.avg_durations)
+        if "TESTMON_COVERAGE_RUN_KEY" not in os.environ:
+            sort_items_by_duration(selected, self.testmon_data.avg_durations)
 
         if self.config.testmon_config.select:
             items[:] = selected
@@ -580,7 +581,8 @@ class TestmonSelect:
                 items=([FakeItemFromTestmon(session.config)] * len(deselected))
             )
         else:
-            sort_items_by_duration(deselected, self.testmon_data.avg_durations)
+            if "TESTMON_COVERAGE_RUN_KEY" not in os.environ:
+                sort_items_by_duration(deselected, self.testmon_data.avg_durations)
             items[:] = selected + deselected
 
     @pytest.hookimpl(trylast=True)

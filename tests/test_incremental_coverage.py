@@ -159,3 +159,39 @@ def test_session_fixture_teardown_remains_covered_across_batches(
     assert cached.returncode == 0, cached.stdout + cached.stderr
     assert "251 deselected" in cached.stdout
     assert "100%" in cached.stdout
+
+
+def test_incremental_coverage_preserves_pytest_order(tmp_path: Path) -> None:
+    (tmp_path / "test_order.py").write_text(
+        "import time\n"
+        "def test_slow():\n"
+        "    time.sleep(0.05)\n"
+        "def test_fast():\n"
+        "    pass\n"
+    )
+    env = os.environ.copy()
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH", ""))
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-p",
+        "testmon.pytest_testmon",
+        "--testmon-noselect",
+        "-v",
+        "test_order.py",
+    ]
+    first = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    reordered = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert reordered.returncode == 0, reordered.stdout + reordered.stderr
+    assert reordered.stdout.index("test_order.py::test_fast") < reordered.stdout.index("test_order.py::test_slow")
+
+    env["TESTMON_COVERAGE_RUN_KEY"] = "coverage-wrapper"
+    second = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert second.stdout.index("test_order.py::test_slow") < second.stdout.index("test_order.py::test_fast")
