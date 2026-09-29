@@ -20,6 +20,22 @@ affected tests](https://testmon.org/blog/determining-affected-tests/)
 To learn more about different options you can use with testmon, please
 head to [testmon.org](https://testmon.org)
 
+## Experimental incremental branch coverage
+
+Run a full suite once to seed both testmon's dependency database and the coverage cache:
+
+```bash
+python -m testmon.incremental_coverage --cache .testmon-coverage -- tests -n 4
+```
+
+Run the same command after edits. The runner executes tests selected by testmon and adds tests that previously covered
+changed files. It reuses branch coverage from skipped tests only for unchanged files. It reports coverage with the
+project's coverage.py configuration and exits nonzero below 100%.
+
+Use `--no-report --output path/to/coverage-file` for a CI matrix leg that contributes to a separate combined 100%
+report. Keep a separate cache for each Python version, dependency set, and test selection. The cache includes per-test
+branch arcs, so it is larger than testmon's dependency database.
+
 ## Call for opensource projects: try testmon in CI with no effort or risk.
 
 We would like to run testmon within your project, collect data and improve!

@@ -581,7 +581,7 @@ class TestmonCollector:
                         outer_data.add_arcs(
                             {file: data.arcs(file) or [] for file in filtered_lines_data}
                         )
-                    data.set_query_context(None)
+                    data.set_query_contexts(None)
                     outer_data.set_context("")
                 else:
                     outer_cov.get_data().add_lines(filtered_lines_data)

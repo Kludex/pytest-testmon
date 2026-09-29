@@ -5,6 +5,7 @@ Main module of testmon pytest plugin.
 import time
 import xmlrpc.client
 import os
+import json
 
 from collections import defaultdict
 from datetime import date, timedelta
@@ -527,6 +528,30 @@ class TestmonSelect:
             for test_name in testmon_data.stable_test_names
             if test_name not in failing_test_names
         ]
+        forced_file = os.environ.get("TESTMON_COVERAGE_FORCED_TESTS_FILE")
+        coverage_cache = os.environ.get("TESTMON_COVERAGE_CACHE")
+        if forced_file or coverage_cache:
+            if forced_file:
+                try:
+                    forced_tests = set(json.loads(Path(forced_file).read_text()))
+                    force_all = False
+                except (OSError, ValueError):
+                    forced_tests, force_all = set(), True
+            else:
+                from testmon.incremental_coverage import tests_to_force
+
+                forced_tests, force_all = tests_to_force(coverage_cache)
+            if force_all:
+                self.deselected_files = []
+                self.deselected_tests = []
+            else:
+                forced_files = {home_file(test_name) for test_name in forced_tests}
+                self.deselected_files = [
+                    filename for filename in self.deselected_files if filename not in forced_files
+                ]
+                self.deselected_tests = [
+                    test_name for test_name in self.deselected_tests if test_name not in forced_tests
+                ]
         self._interrupted = False
 
     def pytest_ignore_collect(self, collection_path: Path, config):
