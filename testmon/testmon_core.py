@@ -493,9 +493,13 @@ class TestmonCollector:
                 if key.endswith("lib")
             },
         }
-        if self.cov_plugin and self.cov_plugin._started:
-            cov = self.cov_plugin.cov_controller.cov
+        cov_plugin_started = self.cov_plugin and self.cov_plugin._started
+        cov = self.cov_plugin.cov_controller.cov if cov_plugin_started else Coverage.current()
+        if cov and cov._started:
             TestmonCollector.coverage_stack.append(cov)
+            if not cov_plugin_started:
+                warnings = cov.get_option("run:disable_warnings")
+                cov.set_option("run:disable_warnings", [*warnings, "already-imported"])
             if cov.config.source:
                 params["include"] = list(
                     set(
@@ -511,11 +515,7 @@ class TestmonCollector:
                     set(cov.config.run_include + params["include"])
                 )
             # params["omit"] = cov.config.run_omit
-            if cov.config.branch:
-                raise TestmonException(
-                    "testmon doesn't support simultaneous run with pytest-cov when "
-                    "branch coverage is on. Please disable branch coverage."
-                )
+            params["branch"] = cov.config.branch
 
         self.cov = Coverage(data_file=self.sub_cov_file, config_file=False, **params)
         self.cov._warn_no_data = False
@@ -571,9 +571,20 @@ class TestmonCollector:
                     for file, data in lines_data.items()
                     if should_include(TestmonCollector.coverage_stack[-2], file)
                 }
-                TestmonCollector.coverage_stack[-2].get_data().add_lines(
-                    filtered_lines_data
-                )
+                outer_cov = TestmonCollector.coverage_stack[-2]
+                if outer_cov.config.branch:
+                    data = self.cov.get_data()
+                    outer_data = outer_cov.get_data()
+                    for context in data.measured_contexts():
+                        data.set_query_context(context)
+                        outer_data.set_context(context)
+                        outer_data.add_arcs(
+                            {file: data.arcs(file) or [] for file in filtered_lines_data}
+                        )
+                    data.set_query_context(None)
+                    outer_data.set_context("")
+                else:
+                    outer_cov.get_data().add_lines(filtered_lines_data)
 
             self.cov.erase()
             self.cov.start()
