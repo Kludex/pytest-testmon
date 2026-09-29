@@ -36,6 +36,9 @@ Use `--no-report --output path/to/coverage-file` for a CI matrix leg that contri
 report. Keep a separate cache for each Python version, dependency set, and test selection. The cache includes per-test
 branch arcs, so it is larger than testmon's dependency database.
 
+The runner needs a Git worktree. A changed repository file without cached coverage forces a full test run. Changes to
+external resources must use a separate cache or a full run.
+
 ## Call for opensource projects: try testmon in CI with no effort or risk.
 
 We would like to run testmon within your project, collect data and improve!

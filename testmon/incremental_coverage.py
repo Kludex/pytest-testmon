@@ -27,6 +27,30 @@ def file_hash(path):
         return None
 
 
+def repository_files(cache_path):
+    try:
+        paths = subprocess.check_output(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    excluded = {
+        cache_path,
+        cache_path.with_name(cache_path.name + ".json"),
+        cache_path.with_name(cache_path.name + ".testmondata"),
+        cache_path.with_name(cache_path.name + ".testmondata-shm"),
+        cache_path.with_name(cache_path.name + ".testmondata-wal"),
+    }
+    files = {}
+    for path in os.fsdecode(paths).split("\0"):
+        if path:
+            filename = Path(path).resolve()
+            if filename not in excluded:
+                files[str(filename)] = file_hash(filename)
+    return files
+
+
 def environment_hash():
     packages = sorted(
         (distribution.metadata["Name"], distribution.version)
@@ -60,6 +84,8 @@ def read_cache(path):
             return None
         if manifest["run_key"] != os.environ.get("TESTMON_COVERAGE_RUN_KEY"):
             return None
+        if "repository_files" not in manifest:
+            return None
         data = CoverageData(basename=str(path))
         data.read()
         if not data.has_arcs():
@@ -83,6 +109,17 @@ def tests_to_force(path):
         return set(), True
 
     data, manifest = cached
+    current_repository_files = repository_files(Path(path).resolve())
+    if current_repository_files is None:
+        return set(), True
+    if any(
+        manifest["repository_files"].get(filename)
+        != current_repository_files.get(filename)
+        and filename not in manifest["files"]
+        for filename in manifest["repository_files"].keys()
+        | current_repository_files.keys()
+    ):
+        return set(), True
     changed = changed_files(manifest)
     forced = set()
     for filename in changed:
@@ -211,6 +248,10 @@ def main():
         json.dumps(run_settings, sort_keys=True).encode()
     ).hexdigest()
     args.cache = args.cache.resolve()
+    args.cache.parent.mkdir(parents=True, exist_ok=True)
+    repository_before = repository_files(args.cache)
+    if repository_before is None:
+        parser.error("incremental coverage requires a Git worktree")
     cached = read_cache(args.cache)
     hashes_before = (
         {filename: file_hash(filename) for filename in cached[1]["files"]}
@@ -227,6 +268,9 @@ def main():
     )
     if status:
         return status
+    if repository_files(args.cache) != repository_before:
+        print("Repository files changed while tests were running", file=sys.stderr)
+        return 1
     if any(file_hash(filename) != value for filename, value in hashes_before.items()):
         print("Source files changed while tests were running", file=sys.stderr)
         return 1
@@ -266,6 +310,7 @@ def main():
             "environment_hash": environment_hash(),
             "run_key": os.environ["TESTMON_COVERAGE_RUN_KEY"],
             "files": files,
+            "repository_files": repository_before,
         }
         manifest_path = args.cache.with_name(args.cache.name + ".json")
         temporary_manifest = manifest_path.with_name(manifest_path.name + ".tmp")
