@@ -75,24 +75,24 @@ def read_cache(path):
     path = Path(path)
     manifest_path = path.with_name(path.name + ".json")
     if not path.is_file() or not manifest_path.is_file():
-        return None
+        return None, "cache file or manifest missing"
     try:
         manifest = json.loads(manifest_path.read_text())
         if manifest["data_hash"] != file_hash(path):
-            return None
+            return None, "coverage data checksum changed"
         if manifest["environment_hash"] != environment_hash():
-            return None
+            return None, "Python environment changed"
         if manifest["run_key"] != os.environ.get("TESTMON_COVERAGE_RUN_KEY"):
-            return None
+            return None, "pytest arguments changed"
         if "repository_files" not in manifest:
-            return None
+            return None, "repository file manifest missing"
         data = CoverageData(basename=str(path))
         data.read()
         if not data.has_arcs():
-            return None
-        return data, manifest
+            return None, "branch coverage data missing"
+        return (data, manifest), None
     except (KeyError, OSError, ValueError):
-        return None
+        return None, "coverage cache unreadable"
 
 
 def changed_files(manifest):
@@ -104,27 +104,33 @@ def changed_files(manifest):
 
 
 def tests_to_force(path):
-    cached = read_cache(path)
+    cached, reason = read_cache(path)
     if cached is None:
-        return set(), True
+        return set(), True, reason
 
     data, manifest = cached
     current_repository_files = repository_files(Path(path).resolve())
     if current_repository_files is None:
-        return set(), True
-    if any(
-        manifest["repository_files"].get(filename)
-        != current_repository_files.get(filename)
-        and filename not in manifest["files"]
+        return set(), True, "repository files unavailable"
+    unmeasured_changes = sorted(
+        filename
         for filename in manifest["repository_files"].keys()
         | current_repository_files.keys()
-    ):
-        return set(), True
+        if manifest["repository_files"].get(filename)
+        != current_repository_files.get(filename)
+        and filename not in manifest["files"]
+    )
+    if unmeasured_changes:
+        return (
+            set(),
+            True,
+            f"unmeasured repository files changed: {', '.join(unmeasured_changes[:5])}",
+        )
     changed = changed_files(manifest)
     forced = set()
     for filename in changed:
         if not Path(filename).exists() or Path(filename).name == "conftest.py":
-            return set(), True
+            return set(), True, f"changed source requires full run: {filename}"
         contexts = {
             context
             for line_contexts in data.contexts_by_lineno(filename).values()
@@ -132,14 +138,14 @@ def tests_to_force(path):
             if context
         }
         if not contexts:
-            return set(), True
+            return set(), True, f"changed source has no test contexts: {filename}"
         forced.update(contexts)
         forced.update(
             context
             for context in data.measured_contexts()
             if context and Path(context.split("::", 1)[0]).resolve() == Path(filename)
         )
-    return forced, False
+    return forced, False, None
 
 
 def merge_coverage(previous, fresh, manifest, output_path):
@@ -254,7 +260,7 @@ def main():
     repository_before = repository_files(args.cache)
     if repository_before is None:
         parser.error("incremental coverage requires a Git worktree")
-    cached = read_cache(args.cache)
+    cached, reason = read_cache(args.cache)
     hashes_before = (
         {filename: file_hash(filename) for filename in cached[1]["files"]}
         if cached
@@ -262,9 +268,20 @@ def main():
     )
     forced_tests = set()
     if cached:
-        forced_tests, force_all = tests_to_force(args.cache)
+        forced_tests, force_all, reason = tests_to_force(args.cache)
         if force_all:
+            print(f"Incremental coverage: full run ({reason})", file=sys.stderr)
             cached = None
+        else:
+            print(
+                f"Incremental coverage: cache valid; forcing {len(forced_tests)} test contexts",
+                file=sys.stderr,
+            )
+    else:
+        print(
+            f"Incremental coverage: full run ({reason})",
+            file=sys.stderr,
+        )
     status, fresh_bytes = run_tests(
         pytest_args, args.cache, select=cached is not None, forced_tests=forced_tests
     )

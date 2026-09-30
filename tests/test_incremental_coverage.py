@@ -184,14 +184,85 @@ def test_incremental_coverage_preserves_pytest_order(tmp_path: Path) -> None:
         "-v",
         "test_order.py",
     ]
-    first = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    first = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True
+    )
     assert first.returncode == 0, first.stdout + first.stderr
 
-    reordered = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    reordered = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True
+    )
     assert reordered.returncode == 0, reordered.stdout + reordered.stderr
-    assert reordered.stdout.index("test_order.py::test_fast") < reordered.stdout.index("test_order.py::test_slow")
+    assert reordered.stdout.index("test_order.py::test_fast") < reordered.stdout.index(
+        "test_order.py::test_slow"
+    )
 
     env["TESTMON_COVERAGE_RUN_KEY"] = "coverage-wrapper"
-    second = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
+    second = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True
+    )
     assert second.returncode == 0, second.stdout + second.stderr
-    assert second.stdout.index("test_order.py::test_slow") < second.stdout.index("test_order.py::test_fast")
+    assert second.stdout.index("test_order.py::test_slow") < second.stdout.index(
+        "test_order.py::test_fast"
+    )
+
+
+def test_changed_source_selects_affected_test_and_keeps_full_coverage(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".gitignore").write_text(".pytest_cache/\n__pycache__/\n.coverage*\n")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.coverage.run]\nbranch = true\ninclude = ["app_module.py"]\n'
+        "[tool.coverage.report]\nfail_under = 100\n"
+    )
+    source = tmp_path / "app_module.py"
+    source.write_text("def answer():\n    return 1\n")
+    (tmp_path / "test_source.py").write_text(
+        "from app_module import answer\n"
+        "def test_source():\n    assert answer() in (1, 2)\n"
+        "def test_other():\n    assert True\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    env = os.environ.copy()
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH", ""))
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "testmon.incremental_coverage",
+        "--cache",
+        str(tmp_path / ".coverage-cache"),
+        "--include",
+        "app_module.py",
+        "--",
+        "-p",
+        "testmon.pytest_testmon",
+        "test_source.py",
+        "-m",
+        "not slow",
+        "-q",
+    ]
+    first = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "2 passed" in first.stdout
+
+    source.write_text("def answer():\n    return 2\n")
+    warm = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert warm.returncode == 0, warm.stdout + warm.stderr
+    assert "1 passed, 1 deselected" in warm.stdout
+    assert "100%" in warm.stdout
+    assert "cache valid; forcing 1 test contexts" in warm.stderr
+
+    (tmp_path / "README.md").write_text("New unmeasured file\n")
+    fallback = subprocess.run(
+        command, cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert fallback.returncode == 0, fallback.stdout + fallback.stderr
+    assert "2 passed" in fallback.stdout
+    assert "unmeasured repository files changed" in fallback.stderr

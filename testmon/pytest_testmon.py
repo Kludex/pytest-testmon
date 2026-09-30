@@ -540,7 +540,7 @@ class TestmonSelect:
             else:
                 from testmon.incremental_coverage import tests_to_force
 
-                forced_tests, force_all = tests_to_force(coverage_cache)
+                forced_tests, force_all, _ = tests_to_force(coverage_cache)
             if force_all:
                 self.deselected_files = []
                 self.deselected_tests = []
