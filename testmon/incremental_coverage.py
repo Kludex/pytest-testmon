@@ -310,10 +310,13 @@ def main():
                 merge_coverage(cached[0], fresh, cached[1], output_path)
             else:
                 shutil.copyfile(fresh_path, output_path)
-        except IncompleteCoverageCache:
+        except IncompleteCoverageCache as error:
+            print(f"Incremental coverage: retrying full run ({error})", file=sys.stderr)
             status, fresh_bytes = run_tests(pytest_args, args.cache, select=False)
             if status:
                 return status
+            fresh_path = Path(tempdir) / "fallback.coverage"
+            fresh = CoverageData(basename=str(fresh_path))
             fresh.loads(fresh_bytes)
             shutil.copyfile(fresh_path, output_path)
 
