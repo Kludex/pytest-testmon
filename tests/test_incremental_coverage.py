@@ -48,6 +48,24 @@ def test_merge_replaces_rerun_test_and_keeps_skipped_test(tmp_path: Path) -> Non
     assert merged.arcs(filename) == [(1, -1)]
 
 
+def test_merge_preserves_default_context_between_runs(tmp_path: Path) -> None:
+    source = tmp_path / "source.py"
+    source.write_text("a = 1\nb = 2\n")
+    filename = str(source)
+    previous = coverage_data(
+        tmp_path / "previous", {"": {filename: [(1, 2)]}}
+    )
+    fresh = coverage_data(
+        tmp_path / "fresh", {"": {filename: [(2, -1)]}}
+    )
+
+    merged = merge_coverage(
+        previous, fresh, {"files": {filename: file_hash(source)}}, tmp_path / "merged"
+    )
+
+    assert set(merged.arcs(filename)) == {(1, 2), (2, -1)}
+
+
 def test_merge_rejects_skipped_test_for_changed_file(tmp_path: Path) -> None:
     source = tmp_path / "source.py"
     source.write_text("a = 1\nb = 2\n")

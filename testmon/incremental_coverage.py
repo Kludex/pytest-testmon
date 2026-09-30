@@ -6,10 +6,10 @@ import importlib.metadata
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
-from collections import defaultdict
 from pathlib import Path
 
 import coverage
@@ -157,10 +157,7 @@ def merge_coverage(previous, fresh, manifest, output_path):
             context
             for context in previous.measured_contexts()
             if context
-            and any(
-                Path(context.split("::", 1)[0]).resolve() == Path(filename)
-                for filename in changed
-            )
+            and str(Path(context.split("::", 1)[0]).resolve()) in changed
         }
         for filename in changed:
             contexts = {
@@ -172,30 +169,48 @@ def merge_coverage(previous, fresh, manifest, output_path):
             if contexts - fresh_contexts - stale_tests:
                 raise IncompleteCoverageCache(f"Tests covering {filename} were skipped")
 
+    if previous:
+        shutil.copyfile(previous.data_filename(), output_path)
+        # update() unions arcs, so remove stale contexts and files before merging.
+        with sqlite3.connect(output_path) as connection:
+            connection.execute(
+                "CREATE TEMP TABLE stale_context (name TEXT PRIMARY KEY)"
+            )
+            connection.executemany(
+                "INSERT INTO stale_context VALUES (?)",
+                ((context,) for context in stale_tests | (fresh_contexts - {""})),
+            )
+            connection.execute(
+                "DELETE FROM arc WHERE context_id IN ("
+                "SELECT context.id FROM context "
+                "JOIN stale_context ON context.context = stale_context.name)"
+            )
+            connection.execute(
+                "CREATE TEMP TABLE changed_file (path TEXT PRIMARY KEY)"
+            )
+            connection.executemany(
+                "INSERT INTO changed_file VALUES (?)",
+                ((filename,) for filename in changed),
+            )
+            connection.execute(
+                "DELETE FROM arc WHERE file_id IN ("
+                "SELECT file.id FROM file "
+                "JOIN changed_file ON file.path = changed_file.path)"
+            )
+            connection.execute(
+                "DELETE FROM tracer WHERE file_id NOT IN (SELECT file_id FROM arc)"
+            )
+            connection.execute(
+                "DELETE FROM file WHERE id NOT IN (SELECT file_id FROM arc)"
+            )
+            connection.execute(
+                "DELETE FROM context WHERE id NOT IN (SELECT context_id FROM arc)"
+            )
+
     output = CoverageData(basename=str(output_path))
-    for source in ([previous] if previous else []) + [fresh]:
-        source.set_query_contexts(None)
-        files_by_context = defaultdict(set)
-        for filename in source.measured_files():
-            for contexts in source.contexts_by_lineno(filename).values():
-                for context in contexts:
-                    files_by_context[context].add(filename)
-        for context in source.measured_contexts():
-            if source is previous and (
-                context in stale_tests or (context and context in fresh_contexts)
-            ):
-                continue
-            source.set_query_context(context)
-            arcs = {
-                filename: source.arcs(filename)
-                for filename in files_by_context[context]
-                if source.arcs(filename)
-                and (source is fresh or filename not in changed)
-            }
-            if arcs:
-                output.set_context(context)
-                output.add_arcs(arcs)
-    output.write()
+    if previous:
+        output.read()
+    output.update(fresh)
     return output
 
 
